@@ -1,5 +1,7 @@
+import re
 import time
 import json
+from urllib import response
 import requests
 
 
@@ -169,3 +171,32 @@ def create_field_for_flow(token, field_details, flow_id):
     return response.json()
 
 
+def create_entry_for_flow(token, entry_details, flow_slug):
+    url = f"https://api.moltin.com/v2/flows/{flow_slug}/entries"
+    headers = {
+        'Authorization': f'Bearer {token}'
+    } 
+    json_data = {
+        'data': {
+            "type": "entry",
+            'longitude': float(entry_details['coordinates']['lon']), 
+            'latitude': float(entry_details['coordinates']['lat']),
+            'alias': entry_details['alias'],
+            'address': entry_details['address']['full']
+        }
+    }
+    response = requests.post(url, headers=headers, json=json_data)
+    response.raise_for_status()
+
+    return response.json()
+
+
+def create_entries_from_json(token, path_to_json, flow_slug):
+    with open(path_to_json, 'r') as f:
+        entries = json.loads(f.read())
+
+    resulted_batch = []
+    for entry in entries:
+        created_entry = create_entry_for_flow(token, entry, flow_slug)
+        resulted_batch.append(created_entry['data'])
+    return resulted_batch

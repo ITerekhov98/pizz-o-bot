@@ -1,8 +1,9 @@
 from environs import Env
 
-from cms_lib import CmsAuthentication, create_field_for_flow
+from cms_lib import CmsAuthentication, create_entries_from_json
 
 import json 
+
 
 def main():
     env = Env()
@@ -12,8 +13,6 @@ def main():
     cms_auth = CmsAuthentication(client_id, client_secret)
     cms_token = cms_auth.get_access_token()
 
-
-    
 
 if __name__ == '__main__':
     main()
