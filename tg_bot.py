@@ -169,8 +169,8 @@ def handle_menu(update, context, cms_token):
 
 def handle_description(update, context, cms_token):
     query = update.callback_query
-    query.answer()
     if query.data == 'back_to_menu':
+        query.answer()
         greeting = 'Хочешь пиццы?'
         reply_markup = get_menu_keyboard(cms_token)
         context.bot.send_message(
@@ -180,6 +180,7 @@ def handle_description(update, context, cms_token):
         )
         return 'HANDLE_MENU'
     elif query.data == 'cart':
+        query.answer()
         return send_user_cart(update, context, cms_token)
     else:
         product_id = query.data
@@ -189,7 +190,7 @@ def handle_description(update, context, cms_token):
             product_id,
             1
         )
-        update.callback_query.answer('Товар добавлен в корзину')
+        query.answer('Товар добавлен в корзину')
     return 'HANDLE_DESCRIPTION'
 
 
