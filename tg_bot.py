@@ -12,18 +12,46 @@ from cms_lib import CmsAuthentication, get_all_products, get_product_by_id, \
                  get_cart, remove_product_from_cart, get_or_create_customer
 
 
-def get_menu_keyboard(cms_token: str):
-    keyboard = []
-    products = get_all_products(cms_token)
+def split_products_to_batches(products, batch_size):
+    for index in range(0, len(products), 8):
+        yield products[index: index + batch_size]
+
+
+def get_menu_keyboard(cms_token: str, batch_size):
+    products = list(split_products_to_batches(get_all_products(cms_token)['data'], 8))
+    if batch_size <= 0:
+        products_batch = products[0]
+    elif batch_size >= len(products):
+        products_batch = products[-1]
+    else:
+        products_batch = products[batch_size]
     keyboard = [
         [InlineKeyboardButton(product['name'], callback_data=product['id'])]
-        for product in products['data']
+        for product in products_batch
     ]
+    keyboard.append([
+        InlineKeyboardButton('Пред', callback_data=f"batch {batch_size-1}"),
+        InlineKeyboardButton('След', callback_data=f"batch {batch_size+1}")]
+    )
     keyboard.append(
         [InlineKeyboardButton('Корзина', callback_data='cart')]
     )
     reply_markup = InlineKeyboardMarkup(keyboard)
     return reply_markup
+
+
+# def get_menu_keyboard(cms_token: str):
+#     keyboard = []
+#     products = get_all_products(cms_token)
+#     keyboard = [
+#         [InlineKeyboardButton(product['name'], callback_data=product['id'])]
+#         for product in products['data']
+#     ]
+#     keyboard.append(
+#         [InlineKeyboardButton('Корзина', callback_data='cart')]
+#     )
+#     reply_markup = InlineKeyboardMarkup(keyboard)
+#     return reply_markup
 
 
 def send_user_cart(update, context, cms_token: str):
@@ -95,14 +123,19 @@ def waiting_email(update, context, cms_token):
     return 'WAITING_EMAIL'
 
 
-def start(update, context, cms_token):
+def start(update, context, cms_token, batch=0):
     greeting = 'Хочешь пиццы?'
-    reply_markup = get_menu_keyboard(cms_token)
+    reply_markup = get_menu_keyboard(cms_token, batch)
     context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=greeting,
         reply_markup=reply_markup
     )
+    if update.callback_query:
+        context.bot.delete_message(
+            chat_id=update.effective_chat.id,
+            message_id=update.callback_query.message.message_id
+        )
     return 'HANDLE_MENU'
 
 
@@ -134,6 +167,10 @@ def handle_menu(update, context, cms_token):
     query.answer()
     if query.data == 'cart':
         return send_user_cart(update, context, cms_token)
+
+    elif 'batch' in query.data:
+        batch= int(query.data.split()[-1])
+        return start(update, context, cms_token, batch=batch)
 
     keyboard = [
         [
@@ -171,14 +208,7 @@ def handle_description(update, context, cms_token):
     query = update.callback_query
     if query.data == 'back_to_menu':
         query.answer()
-        greeting = 'Хочешь пиццы?'
-        reply_markup = get_menu_keyboard(cms_token)
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=greeting,
-            reply_markup=reply_markup
-        )
-        return 'HANDLE_MENU'
+        return start(update, context, cms_token)
     elif query.data == 'cart':
         query.answer()
         return send_user_cart(update, context, cms_token)
