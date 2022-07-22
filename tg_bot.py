@@ -21,14 +21,12 @@ def split_products_to_batches(products, batch_size):
 
 
 def fetch_coordinates(apikey, address):
-    print(address)
     base_url = "https://geocode-maps.yandex.ru/1.x"
     response = requests.get(base_url, params={
         "geocode": address,
         "apikey": apikey,
         "format": "json",
     })
-    print(response.json())
     response.raise_for_status()
     found_places = response.json()['response']['GeoObjectCollection']['featureMember']
 
@@ -301,6 +299,14 @@ def handle_waiting(update, context, cms_token, ya_api_key):
         return 'HANDLE_WAITING'
     return calculate_delivery(update, context, cms_token, current_pos)
 
+def callback_alarm(context):
+    context.bot.send_message(
+        chat_id=context.job.context,
+        text='''
+            Приятного аппетита! *место для рекламы*
+            *сообщение что делать если пицца не пришла*'''
+    )
+
 
 def handle_order(update, context, cms_token):
     query = update.callback_query
@@ -322,10 +328,11 @@ def handle_order(update, context, cms_token):
             chat_id=update.effective_chat.id,
             text='Ваш заказ принят в обработку!',
         )
+        context.job_queue.run_once(callback_alarm, 6, context=update.effective_chat.id)
     return 'START'
         
 
-def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token):
+def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token=''):
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
@@ -352,6 +359,8 @@ def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token):
     cms_token = cms_auth.get_access_token()
     if user_state == 'HANDLE_WAITING':
         next_state = state_handler(update, context, cms_token, ya_api_token)
+    elif user_state == 'HANDLE_ORDER':
+        next_state = state_handler(update, context, cms_token)
     else:
         next_state = state_handler(update, context, cms_token)
     redis_db.set(chat_id, next_state)
@@ -374,11 +383,11 @@ def main():
     updater = Updater(env.str('TG_BOT_TOKEN'))
     dispatcher = updater.dispatcher
     dispatcher.add_handler(CallbackQueryHandler(
-        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth, ya_api_token=ya_api_token))
+        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth), pass_job_queue=True)
     )
     dispatcher.add_handler(CommandHandler(
         'start',
-        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth, ya_api_token=ya_api_token))
+        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth))
     )
     dispatcher.add_handler(MessageHandler(
         Filters.text,
