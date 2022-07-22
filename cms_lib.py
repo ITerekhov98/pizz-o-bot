@@ -293,3 +293,44 @@ def add_product_to_cart(token: str, user_id: str, product_id: str, quantity: int
     response = requests.post(url, headers=headers, json=json_data)
     response.raise_for_status()
     return response.json()
+
+
+def get_all_entries(token, flow_slug='pizza-shop'):
+    url = f'https://api.moltin.com/v2/flows/{flow_slug}/entries'
+    headers = {
+        'Authorization': f'Bearer {token}',
+    }
+    
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+
+    return response.json()   
+
+def save_customer_coords(token, coords, customer_id):
+    lat, lon = map(float, coords)
+    url = "https://api.moltin.com/v2/flows/customer-address/entries"
+    headers = {
+        'Authorization': f'Bearer {token}'
+    } 
+    json_data = {
+        'data': {
+            "type": "entry",
+            'longitude': lon, 
+            'latitude': lat,
+            'customer-id': str(customer_id)
+        }
+    }
+    response = requests.post(url, headers=headers, json=json_data)
+    response.raise_for_status()
+
+    return response.json()
+
+def get_address(token, entry_id):
+    url = f"https://api.moltin.com/v2/flows/customer-address/entries/{entry_id}"
+    headers = {
+        'Authorization': f'Bearer {token}'
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+
+    return response.json()

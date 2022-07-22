@@ -1,3 +1,4 @@
+import requests
 from functools import partial
 
 import redis
@@ -6,15 +7,37 @@ from environs import Env
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, \
                          Filters, CallbackQueryHandler
-
+from geopy import distance
 from cms_lib import CmsAuthentication, get_all_products, get_product_by_id, \
                  get_photo_by_id, add_product_to_cart, get_cart_items, \
-                 get_cart, remove_product_from_cart, get_or_create_customer
+                 get_cart, remove_product_from_cart, get_or_create_customer, get_all_entries, save_customer_coords, get_address
+                 
 
 
 def split_products_to_batches(products, batch_size):
     for index in range(0, len(products), 8):
         yield products[index: index + batch_size]
+
+
+
+def fetch_coordinates(apikey, address):
+    print(address)
+    base_url = "https://geocode-maps.yandex.ru/1.x"
+    response = requests.get(base_url, params={
+        "geocode": address,
+        "apikey": apikey,
+        "format": "json",
+    })
+    print(response.json())
+    response.raise_for_status()
+    found_places = response.json()['response']['GeoObjectCollection']['featureMember']
+
+    if not found_places:
+        return None
+
+    most_relevant = found_places[0]
+    lon, lat = most_relevant['GeoObject']['Point']['pos'].split(" ")
+    return lat, lon
 
 
 def get_menu_keyboard(cms_token: str, batch_size):
@@ -148,9 +171,9 @@ def handle_cart(update, context, cms_token):
     elif query.data == 'payment':
         context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text='Введите, пожалуйста ваш email, с вами свяжутся рыбные специалисты',
+            text='Пришлите ваш адрес или геолокацию',
         )
-        return 'WAITING_EMAIL'
+        return 'HANDLE_WAITING'
 
     else:
         product_id = query.data
@@ -224,7 +247,85 @@ def handle_description(update, context, cms_token):
     return 'HANDLE_DESCRIPTION'
 
 
-def handle_users_reply(update, context, redis_db, cms_auth):
+def get_delivery_keyboard(nearest_pizzeria, address_entry_id):
+    keyboard = [
+        [InlineKeyboardButton('Самовывоз', callback_data='pickup')]
+    ]
+    if nearest_pizzeria['distance'] <= 20:
+        keyboard.append(
+            [InlineKeyboardButton('Доставка', callback_data=f"delivery {nearest_pizzeria['delivery-chat-id']} {address_entry_id}")]
+        )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    return reply_markup
+
+
+def calculate_delivery(update, context, cms_token, current_pos):
+    pizzerias = get_all_entries(cms_token)['data']
+    for pizzeria in pizzerias:
+        pizzeria_distance = distance.distance(current_pos, (pizzeria['latitude'], pizzeria['longitude']))
+        pizzeria['distance'] = pizzeria_distance
+
+    nearest_pizzeria = min(pizzerias, key= lambda x: x['distance'])
+    if nearest_pizzeria['distance'] <= 0.5:
+        text = 'Можете забрать сами'
+    elif nearest_pizzeria['distance'] <= 5:
+        text = 'Доставка 100 рублей'
+    elif nearest_pizzeria['distance'] <= 20:
+        text = 'Доставка 300 рублей'
+    else:
+        text = 'Самовывоз'
+
+    address_entry_id = save_customer_coords(cms_token, current_pos, update.effective_chat.id)['data']['id']
+    reply_markup = get_delivery_keyboard(nearest_pizzeria, address_entry_id)
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text,
+        reply_markup=reply_markup
+    )
+    return 'HANDLE_ORDER'
+
+    
+
+def handle_waiting(update, context, cms_token, ya_api_key):
+    if update.message:
+        address = update.message.text
+        current_pos = fetch_coordinates(ya_api_key, address)
+    elif update.edited_message:
+        message = update.edited_message
+        current_pos = (message.location.latitude, message.location.longitude)
+    if not current_pos:
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text='Не нашел такого',
+        )
+        return 'HANDLE_WAITING'
+    return calculate_delivery(update, context, cms_token, current_pos)
+
+
+def handle_order(update, context, cms_token):
+    query = update.callback_query
+    query.answer()
+    if 'pickup' in query.data:
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text='Будем ждать',
+        )
+    elif 'delivery' in query.data:
+        _, delivery_chat, address_id = query.data.split()
+        coords = get_address(cms_token, address_id)['data']
+        context.bot.send_location(
+            chat_id=delivery_chat,
+            latitude = coords['latitude'],
+            longitude = coords['longitude']
+        )
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text='Ваш заказ принят в обработку!',
+        )
+    return 'START'
+        
+
+def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token):
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
@@ -243,11 +344,16 @@ def handle_users_reply(update, context, redis_db, cms_auth):
         'HANDLE_MENU': handle_menu,
         'HANDLE_DESCRIPTION': handle_description,
         'HANDLE_CART': handle_cart,
-        'WAITING_EMAIL': waiting_email
+        'WAITING_EMAIL': waiting_email,
+        'HANDLE_WAITING': handle_waiting,
+        'HANDLE_ORDER': handle_order
     }
     state_handler = states_functions[user_state]
     cms_token = cms_auth.get_access_token()
-    next_state = state_handler(update, context, cms_token)
+    if user_state == 'HANDLE_WAITING':
+        next_state = state_handler(update, context, cms_token, ya_api_token)
+    else:
+        next_state = state_handler(update, context, cms_token)
     redis_db.set(chat_id, next_state)
 
 
@@ -263,19 +369,20 @@ def main():
     )
     client_id = env.str('ELASTIC_PATH_CLIENT_ID')
     client_secret = env.str('ELASTIC_PATH_CLIENT_SECRET')
+    ya_api_token = env.str('YANDEX_API_TOKEN')
     cms_auth = CmsAuthentication(client_id, client_secret)
     updater = Updater(env.str('TG_BOT_TOKEN'))
     dispatcher = updater.dispatcher
     dispatcher.add_handler(CallbackQueryHandler(
-        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth))
+        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth, ya_api_token=ya_api_token))
     )
     dispatcher.add_handler(CommandHandler(
         'start',
-        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth))
+        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth, ya_api_token=ya_api_token))
     )
     dispatcher.add_handler(MessageHandler(
         Filters.text,
-        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth))
+        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth, ya_api_token=ya_api_token))
     )
 
     updater.start_polling()

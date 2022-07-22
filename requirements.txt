@@ -3,3 +3,4 @@ environs==9.5.0
 redis==4.3.4
 python-telegram-bot==13.12
 email-validate==1.1.2
+geopy==2.2.0
