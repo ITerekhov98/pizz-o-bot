@@ -1,5 +1,7 @@
 import requests
 from functools import partial
+from telegram import (LabeledPrice, ShippingOption)
+
 
 import redis
 from email_validate import validate
@@ -7,10 +9,12 @@ from environs import Env
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, \
                          Filters, CallbackQueryHandler
+from telegram.ext import (Updater, CommandHandler, MessageHandler,
+                          Filters, PreCheckoutQueryHandler, ShippingQueryHandler)
 from geopy import distance
 from cms_lib import CmsAuthentication, get_all_products, get_product_by_id, \
                  get_photo_by_id, add_product_to_cart, get_cart_items, \
-                 get_cart, remove_product_from_cart, get_or_create_customer, get_all_entries, save_customer_coords, get_address
+                 get_cart, remove_product_from_cart, get_all_entries, save_customer_coords, get_customer_address, clear_cart
                  
 
 
@@ -61,20 +65,6 @@ def get_menu_keyboard(cms_token: str, batch_size):
     return reply_markup
 
 
-# def get_menu_keyboard(cms_token: str):
-#     keyboard = []
-#     products = get_all_products(cms_token)
-#     keyboard = [
-#         [InlineKeyboardButton(product['name'], callback_data=product['id'])]
-#         for product in products['data']
-#     ]
-#     keyboard.append(
-#         [InlineKeyboardButton('Корзина', callback_data='cart')]
-#     )
-#     reply_markup = InlineKeyboardMarkup(keyboard)
-#     return reply_markup
-
-
 def send_user_cart(update, context, cms_token: str):
     query = update.callback_query
     keyboard = []
@@ -82,11 +72,12 @@ def send_user_cart(update, context, cms_token: str):
     cart_items = get_cart_items(cms_token, update.effective_chat.id)
     product_template = '{}\r\n{}\r\n{} пицц в корзине на сумму {}\r\n\r\n'
     for product in cart_items['data']:
+        amount = float(product['meta']['display_price']['with_tax']['value']['formatted']) * 100
         text += product_template.format(
             product['name'],
             product['description'],
             product['quantity'],
-            product['meta']['display_price']['with_tax']['value']['formatted']
+            amount
         )
         keyboard.append(
             [InlineKeyboardButton(
@@ -95,7 +86,8 @@ def send_user_cart(update, context, cms_token: str):
             ]
         )
     cart_info = get_cart(cms_token, update.effective_chat.id)['data']
-    text += f"К оплате: {cart_info['meta']['display_price']['with_tax']['formatted']}"
+    total_amount = float(cart_info['meta']['display_price']['with_tax']['formatted']) * 100
+    text += f"К оплате: {total_amount}"
 
     keyboard.append(
         [InlineKeyboardButton('В меню', callback_data='menu')]
@@ -115,33 +107,6 @@ def send_user_cart(update, context, cms_token: str):
         message_id=query.message.message_id
     )
     return 'HANDLE_CART'
-
-
-def waiting_email(update, context, cms_token):
-    is_valid_email = validate(
-        update.message.text,
-        check_blacklist=False,
-        check_dns=False,
-        check_smtp=False
-    )
-    if is_valid_email:
-        customer_info, created = get_or_create_customer(
-            cms_token,
-            str(update.effective_chat.id),
-            update.message.text
-        )
-        text = 'Спасибо что купили рыбу'
-        if not created:
-            text += '. Рады что вам понравилось'
-        update.message.reply_text(
-            text=text,
-        )
-        return 'START'
-
-    update.message.reply_text(
-        text='Введённый email некорректен. Попробуйте ещё раз',
-    )
-    return 'WAITING_EMAIL'
 
 
 def start(update, context, cms_token, batch=0):
@@ -245,19 +210,19 @@ def handle_description(update, context, cms_token):
     return 'HANDLE_DESCRIPTION'
 
 
-def get_delivery_keyboard(nearest_pizzeria, address_entry_id):
+def get_delivery_keyboard(nearest_pizzeria, order_amount):
     keyboard = [
-        [InlineKeyboardButton('Самовывоз', callback_data='pickup')]
+        [InlineKeyboardButton('Самовывоз', callback_data=f'pickup {order_amount}')]
     ]
     if nearest_pizzeria['distance'] <= 20:
         keyboard.append(
-            [InlineKeyboardButton('Доставка', callback_data=f"delivery {nearest_pizzeria['delivery-chat-id']} {address_entry_id}")]
+            [InlineKeyboardButton('Доставка', callback_data=f"delivery {order_amount}")]
         )
     reply_markup = InlineKeyboardMarkup(keyboard)
     return reply_markup
 
 
-def calculate_delivery(update, context, cms_token, current_pos):
+def calculate_delivery(update, context, cms_token, current_pos, redis_db):
     pizzerias = get_all_entries(cms_token)['data']
     for pizzeria in pizzerias:
         pizzeria_distance = distance.distance(current_pos, (pizzeria['latitude'], pizzeria['longitude']))
@@ -265,26 +230,65 @@ def calculate_delivery(update, context, cms_token, current_pos):
 
     nearest_pizzeria = min(pizzerias, key= lambda x: x['distance'])
     if nearest_pizzeria['distance'] <= 0.5:
+        delivery_price = 0
         text = 'Можете забрать сами'
     elif nearest_pizzeria['distance'] <= 5:
+        delivery_price = 100
         text = 'Доставка 100 рублей'
     elif nearest_pizzeria['distance'] <= 20:
+        delivery_price = 300
         text = 'Доставка 300 рублей'
     else:
+        delivery_price = 0
         text = 'Самовывоз'
 
+    order_amount = get_cart(cms_token, update.effective_chat.id)['data']['meta']['display_price']['with_tax']['amount']
+    order_amount += delivery_price
     address_entry_id = save_customer_coords(cms_token, current_pos, update.effective_chat.id)['data']['id']
-    reply_markup = get_delivery_keyboard(nearest_pizzeria, address_entry_id)
+    redis_db.set(f"delivery {update.effective_chat.id}", f"{address_entry_id} {nearest_pizzeria['delivery-chat-id']}")
+    reply_markup = get_delivery_keyboard(nearest_pizzeria, order_amount)
     context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=text,
         reply_markup=reply_markup
     )
-    return 'HANDLE_ORDER'
+    return 'HANDLE_PAYMENT'
 
-    
 
-def handle_waiting(update, context, cms_token, ya_api_key):
+def handle_payment(update, context, cms_token, redis_db, payment_token):
+    chat_id = update.effective_chat.id
+    query = update.callback_query
+    query.answer()
+    shipping_method, price = query.data.split()
+    shipping_details = redis_db.get(f'delivery {chat_id}')
+    redis_db.set(f'delivery {chat_id}', f'{shipping_details} {shipping_method}')
+
+    title = "Платёж за пиццку"
+    description = "Платёж за пиццку"
+    payload = "Custom-Payload"
+    start_parameter = "test-payment"
+    currency = "RUB"
+    prices = [LabeledPrice("Test", int(price) * 100)]
+
+    context.bot.sendInvoice(chat_id, title, description, payload,
+                    payment_token, start_parameter, currency, prices)
+                    
+    return 'WAITING_PAYMENT'
+
+
+def precheckout_callback(update, context):
+    query = update.pre_checkout_query
+    # check the payload, is this from your bot?
+    if query.invoice_payload != 'Custom-Payload':
+        # answer False pre_checkout_query
+        context.bot.answer_pre_checkout_query(pre_checkout_query_id=query.id, ok=False,
+                                      error_message="Something went wrong...")
+    else:
+        context.bot.answer_pre_checkout_query(pre_checkout_query_id=query.id, ok=True)
+
+
+
+def handle_waiting(update, context, cms_token, ya_api_key, redis_db):
     if update.message:
         address = update.message.text
         current_pos = fetch_coordinates(ya_api_key, address)
@@ -297,7 +301,8 @@ def handle_waiting(update, context, cms_token, ya_api_key):
             text='Не нашел такого',
         )
         return 'HANDLE_WAITING'
-    return calculate_delivery(update, context, cms_token, current_pos)
+    return calculate_delivery(update, context, cms_token, current_pos, redis_db)
+
 
 def callback_alarm(context):
     context.bot.send_message(
@@ -308,19 +313,20 @@ def callback_alarm(context):
     )
 
 
-def handle_order(update, context, cms_token):
-    query = update.callback_query
-    query.answer()
-    if 'pickup' in query.data:
+def successful_payment_callback(update, context, cms_token, redis_db):
+    chat_id = update.effective_chat.id
+    shipping_details = redis_db.get(f'delivery {chat_id}')
+    address_entry_id, pizzeria_chat, shipping_method = shipping_details.split()
+
+    if shipping_method == 'pickup':
         context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text='Будем ждать',
         )
-    elif 'delivery' in query.data:
-        _, delivery_chat, address_id = query.data.split()
-        coords = get_address(cms_token, address_id)['data']
+    elif shipping_method == 'delivery':
+        coords = get_customer_address(cms_token, address_entry_id)['data']
         context.bot.send_location(
-            chat_id=delivery_chat,
+            chat_id=pizzeria_chat,
             latitude = coords['latitude'],
             longitude = coords['longitude']
         )
@@ -328,11 +334,13 @@ def handle_order(update, context, cms_token):
             chat_id=update.effective_chat.id,
             text='Ваш заказ принят в обработку!',
         )
-        context.job_queue.run_once(callback_alarm, 6, context=update.effective_chat.id)
-    return 'START'
-        
+        context.job_queue.run_once(callback_alarm, 6, context=chat_id)
+    clear_cart(cms_token, chat_id)
+    redis_db.set(chat_id, 'START')
+    return
 
-def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token=''):
+
+def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token='', payment_token=''):
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
@@ -351,16 +359,15 @@ def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token=''):
         'HANDLE_MENU': handle_menu,
         'HANDLE_DESCRIPTION': handle_description,
         'HANDLE_CART': handle_cart,
-        'WAITING_EMAIL': waiting_email,
         'HANDLE_WAITING': handle_waiting,
-        'HANDLE_ORDER': handle_order
+        'HANDLE_PAYMENT': handle_payment
     }
     state_handler = states_functions[user_state]
     cms_token = cms_auth.get_access_token()
     if user_state == 'HANDLE_WAITING':
-        next_state = state_handler(update, context, cms_token, ya_api_token)
-    elif user_state == 'HANDLE_ORDER':
-        next_state = state_handler(update, context, cms_token)
+        next_state = state_handler(update, context, cms_token, ya_api_token, redis_db)
+    elif user_state == 'HANDLE_PAYMENT':
+        next_state = state_handler(update, context, cms_token, redis_db, payment_token)
     else:
         next_state = state_handler(update, context, cms_token)
     redis_db.set(chat_id, next_state)
@@ -379,11 +386,12 @@ def main():
     client_id = env.str('ELASTIC_PATH_CLIENT_ID')
     client_secret = env.str('ELASTIC_PATH_CLIENT_SECRET')
     ya_api_token = env.str('YANDEX_API_TOKEN')
+    payment_token = env.str('TG_PAYMENT_TOKEN')
     cms_auth = CmsAuthentication(client_id, client_secret)
     updater = Updater(env.str('TG_BOT_TOKEN'))
     dispatcher = updater.dispatcher
     dispatcher.add_handler(CallbackQueryHandler(
-        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth), pass_job_queue=True)
+        partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth, payment_token=payment_token), pass_job_queue=True)
     )
     dispatcher.add_handler(CommandHandler(
         'start',
@@ -393,7 +401,8 @@ def main():
         Filters.text,
         partial(handle_users_reply, redis_db=redis_db, cms_auth=cms_auth, ya_api_token=ya_api_token))
     )
-
+    dispatcher.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    dispatcher.add_handler(MessageHandler(Filters.successful_payment, partial(successful_payment_callback, redis_db=redis_db, cms_token=cms_auth.get_access_token())))
     updater.start_polling()
 
 
