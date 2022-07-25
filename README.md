@@ -23,5 +23,3 @@ pip3 install -r requirements.txt
 ```
 python tg_bot.py
 ```
-
-Названия пицц, их описания и фото взяты из меню сети пиццерий [dodopizza](https://dodopizza.ru/) в целях визуализации функциональности бота.
