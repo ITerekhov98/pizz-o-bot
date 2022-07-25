@@ -1,7 +1,6 @@
-import re
 import time
 import json
-from urllib import response
+
 import requests
 
 
@@ -59,10 +58,11 @@ def create_product(token: str, product_details):
 
     return response.json()
 
+
 def create_image(token, product_details):
     url = 'https://api.moltin.com/v2/files'
     headers = {
-        'Authorization': f'Bearer {token}',    
+        'Authorization': f'Bearer {token}',
     }
     files = {
         'file_location': (None, product_details['product_image']['url']),
@@ -84,10 +84,11 @@ def link_picture_with_product(token, product_id, image_id):
             'id': image_id,
         },
     }
-    response = requests.post(url ,headers=headers, json=json_data)
+    response = requests.post(url, headers=headers, json=json_data)
     response.raise_for_status()
 
     return response.json()
+
 
 def delete_product(token, product_id):
     url = f"https://api.moltin.com/v2/products/{product_id}"
@@ -97,33 +98,38 @@ def delete_product(token, product_id):
     response = requests.delete(url, headers=headers)
     response.raise_for_status()
 
-    return 
+    return
 
 
 def get_all_products(token):
-    url = f"https://api.moltin.com/v2/products"
+    url = 'https://api.moltin.com/v2/products'
     headers = {
         'Authorization': f'Bearer {token}'
     }
     response = requests.get(url, headers=headers)
     response.raise_for_status()
-    
+
     return response.json()
 
 
 def create_products_from_json(token, path_to_json):
     with open(path_to_json, 'r') as f:
         menu_items = json.loads(f.read())
-    
+
     for item in menu_items:
         created_product_details = create_product(token, item)
         loaded_image_details = create_image(token, item)
-        result = link_picture_with_product(token, created_product_details['data']['id'], loaded_image_details['data']['id'])
-    
+        link_picture_with_product(
+            token,
+            created_product_details['data']['id'],
+            loaded_image_details['data']['id']
+        )
+
     return get_all_products(token)
 
+
 def create_flow(token, flow_details):
-    url = 'https://api.moltin.com/v2/flows'    
+    url = 'https://api.moltin.com/v2/flows'
     headers = {
         'Authorization': f'Bearer {token}'
     }
@@ -141,11 +147,12 @@ def create_flow(token, flow_details):
 
     return response.json()
 
+
 def create_field_for_flow(token, field_details, flow_id):
     url = 'https://api.moltin.com/v2/fields'
     headers = {
         'Authorization': f'Bearer {token}'
-    }  
+    }
     json_data = {
         'data': {
             'type': 'field',
@@ -175,11 +182,11 @@ def create_entry_for_customer_address(token, entry_details, flow_slug):
     url = f"https://api.moltin.com/v2/flows/{flow_slug}/entries"
     headers = {
         'Authorization': f'Bearer {token}'
-    } 
+    }
     json_data = {
         'data': {
             "type": "entry",
-            'longitude': float(entry_details['coordinates']['lon']), 
+            'longitude': float(entry_details['coordinates']['lon']),
             'latitude': float(entry_details['coordinates']['lat']),
             'alias': entry_details['alias'],
             'address': entry_details['address']['full']
@@ -197,7 +204,11 @@ def create_entries_from_json(token, path_to_json, flow_slug):
 
     resulted_batch = []
     for entry in entries:
-        created_entry = create_entry_for_customer_address(token, entry, flow_slug)
+        created_entry = create_entry_for_customer_address(
+            token,
+            entry,
+            flow_slug
+        )
         resulted_batch.append(created_entry['data'])
     return resulted_batch
 
@@ -301,11 +312,11 @@ def get_all_entries(token, flow_slug='pizza-shop'):
     headers = {
         'Authorization': f'Bearer {token}',
     }
-    
+
     response = requests.get(url, headers=headers)
     response.raise_for_status()
 
-    return response.json()   
+    return response.json()
 
 
 def save_customer_coords(token, coords, customer_id):
@@ -313,11 +324,11 @@ def save_customer_coords(token, coords, customer_id):
     url = "https://api.moltin.com/v2/flows/customer-address/entries"
     headers = {
         'Authorization': f'Bearer {token}'
-    } 
+    }
     json_data = {
         'data': {
             "type": "entry",
-            'longitude': lon, 
+            'longitude': lon,
             'latitude': lat,
             'customer-id': str(customer_id)
         }
@@ -347,4 +358,4 @@ def clear_cart(token, user_id):
     response = requests.delete(url, headers=headers)
     response.raise_for_status()
 
-    return 
+    return
