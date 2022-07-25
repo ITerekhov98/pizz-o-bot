@@ -259,12 +259,14 @@ def precheckout_callback(update, context):
 
 
 def handle_waiting(update, context, cms_token, ya_api_key, redis_db):
-    if update.message:
+    print(0)
+    if update.message.location:
+        current_pos = (update.message.location.latitude, update.message.location.longitude)
+        print(1)
+    else:
         address = update.message.text
         current_pos = fetch_coordinates(ya_api_key, address)
-    elif update.edited_message:
-        message = update.edited_message
-        current_pos = (message.location.latitude, message.location.longitude)
+    print(2)
     if not current_pos:
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -311,12 +313,16 @@ def successful_payment_callback(update, context, cms_token, redis_db, feedback_d
 
 
 def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token='', payment_token=''):
+    print('11')
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
     elif update.callback_query:
         user_reply = update.callback_query.data
         chat_id = update.callback_query.message.chat_id
+    elif update.edited_message:
+        user_reply = update.edited_message
+        chat_id=update.effective_chat.id,
     else:
         return
     if user_reply == '/start':
@@ -393,6 +399,15 @@ def main():
             redis_db=redis_db,
             cms_auth=cms_auth,
             ya_api_token=ya_api_token
+        ))
+    )
+    dispatcher.add_handler(MessageHandler(
+        Filters.location,
+        partial(
+            handle_users_reply,
+            redis_db=redis_db,
+            cms_auth=cms_auth,
+            ya_api_token=ya_api_token,
         ))
     )
     dispatcher.add_handler(PreCheckoutQueryHandler(precheckout_callback))
