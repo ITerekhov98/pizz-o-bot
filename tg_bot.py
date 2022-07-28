@@ -259,14 +259,11 @@ def precheckout_callback(update, context):
 
 
 def handle_waiting(update, context, cms_token, ya_api_key, redis_db):
-    print(0)
     if update.message.location:
         current_pos = (update.message.location.latitude, update.message.location.longitude)
-        print(1)
     else:
         address = update.message.text
         current_pos = fetch_coordinates(ya_api_key, address)
-    print(2)
     if not current_pos:
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -313,7 +310,6 @@ def successful_payment_callback(update, context, cms_token, redis_db, feedback_d
 
 
 def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token='', payment_token=''):
-    print('11')
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
