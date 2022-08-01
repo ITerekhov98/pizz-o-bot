@@ -6,7 +6,7 @@ from environs import Env
 from geopy import distance
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, \
-                         Filters, CallbackQueryHandler, PreCheckoutQueryHandler
+                         Filters, CallbackQueryHandler, PreCheckoutQueryHandler, CallbackContext
 
 from cms_lib import CmsAuthentication, get_product_by_id, \
                  get_photo_by_id, add_product_to_cart, get_cart_items, \
@@ -16,7 +16,8 @@ from cms_lib import CmsAuthentication, get_product_by_id, \
 from tg_bot_lib import fetch_coordinates, get_menu_keyboard, get_delivery_keyboard
 
 
-def send_user_cart(update, context, cms_token: str):
+def send_user_cart(update, context):
+    cms_token = context.bot_data['cms_token']
     query = update.callback_query
     keyboard = []
     text = ''
@@ -63,7 +64,9 @@ def send_user_cart(update, context, cms_token: str):
     return 'HANDLE_CART'
 
 
-def start(update, context, cms_token, batch=0):
+def start(update, context, batch=0):
+    cms_token = context.bot_data['cms_token']
+
     greeting = 'Хочешь пиццы?'
     reply_markup = get_menu_keyboard(cms_token, batch)
     context.bot.send_message(
@@ -79,11 +82,13 @@ def start(update, context, cms_token, batch=0):
     return 'HANDLE_MENU'
 
 
-def handle_cart(update, context, cms_token):
+def handle_cart(update, context):
+    cms_token = context.bot_data['cms_token']
+
     query = update.callback_query
     query.answer()
     if query.data == 'menu':
-        return start(update, context, cms_token)
+        return start(update, context)
 
     elif query.data == 'payment':
         context.bot.send_message(
@@ -99,18 +104,20 @@ def handle_cart(update, context, cms_token):
             update.effective_chat.id,
             product_id
         )
-        return send_user_cart(update, context, cms_token)
+        return send_user_cart(update, context)
 
 
-def handle_menu(update, context, cms_token):
+def handle_menu(update, context):
+    cms_token = context.bot_data['cms_token']
+
     query = update.callback_query
     query.answer()
     if query.data == 'cart':
-        return send_user_cart(update, context, cms_token)
+        return send_user_cart(update, context)
 
     elif 'batch' in query.data:
         batch = int(query.data.split()[-1])
-        return start(update, context, cms_token, batch=batch)
+        return start(update, context, batch=batch)
 
     keyboard = [
         [
@@ -144,14 +151,16 @@ def handle_menu(update, context, cms_token):
     return 'HANDLE_DESCRIPTION'
 
 
-def handle_description(update, context, cms_token):
+def handle_description(update, context):
+    cms_token = context.bot_data['cms_token']
+
     query = update.callback_query
     if query.data == 'back_to_menu':
         query.answer()
-        return start(update, context, cms_token)
+        return start(update, context)
     elif query.data == 'cart':
         query.answer()
-        return send_user_cart(update, context, cms_token)
+        return send_user_cart(update, context)
     else:
         product_id = query.data
         add_product_to_cart(
@@ -213,7 +222,10 @@ def calculate_delivery(update, context, cms_token, current_pos, redis_db):
     return 'HANDLE_PAYMENT'
 
 
-def handle_payment(update, context, cms_token, redis_db, payment_token):
+def handle_payment(update, context):
+    redis_db = context.bot_data['redis_db']
+    payment_token = context.bot_data['payment_token']
+
     chat_id = update.effective_chat.id
     query = update.callback_query
     query.answer()
@@ -258,12 +270,16 @@ def precheckout_callback(update, context):
         )
 
 
-def handle_waiting(update, context, cms_token, ya_api_key, redis_db):
+def handle_waiting(update, context):
+    ya_api_token = context.bot_data['ya_api_token']
+    cms_token = context.bot_data['cms_token']
+    redis_db = context.bot_data['redis_db']
+
     if update.message.location:
         current_pos = (update.message.location.latitude, update.message.location.longitude)
     else:
         address = update.message.text
-        current_pos = fetch_coordinates(ya_api_key, address)
+        current_pos = fetch_coordinates(ya_api_token, address)
     if not current_pos:
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -282,7 +298,7 @@ def callback_alarm(context):
     )
 
 
-def successful_payment_callback(update, context, cms_token, redis_db, feedback_delay):
+def successful_payment_callback(update, context, redis_db, cms_token, feedback_delay):
     chat_id = update.effective_chat.id
     shipping_details = redis_db.get(f'delivery {chat_id}')
     address_entry_id, pizzeria_chat, shipping_method = shipping_details.split()
@@ -309,7 +325,7 @@ def successful_payment_callback(update, context, cms_token, redis_db, feedback_d
     return
 
 
-def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token='', payment_token=''):
+def handle_users_reply(update, context: CallbackContext, redis_db, cms_auth, ya_api_token='', payment_token=''):
     if update.message:
         user_reply = update.message.text
         chat_id = update.message.chat_id
@@ -335,25 +351,13 @@ def handle_users_reply(update, context, redis_db, cms_auth, ya_api_token='', pay
         'HANDLE_PAYMENT': handle_payment
     }
     state_handler = states_functions[user_state]
-    cms_token = cms_auth.get_access_token()
-    if user_state == 'HANDLE_WAITING':
-        next_state = state_handler(
-            update,
-            context,
-            cms_token,
-            ya_api_token,
-            redis_db
-        )
-    elif user_state == 'HANDLE_PAYMENT':
-        next_state = state_handler(
-            update,
-            context,
-            cms_token,
-            redis_db,
-            payment_token
-        )
-    else:
-        next_state = state_handler(update, context, cms_token)
+
+    context.bot_data['cms_token'] = cms_auth.get_access_token()
+    context.bot_data['redis_db'] = redis_db
+    context.bot_data['ya_api_token'] = ya_api_token
+    context.bot_data['payment_token'] = payment_token
+
+    next_state = state_handler(update, context)
     redis_db.set(chat_id, next_state)
 
 
