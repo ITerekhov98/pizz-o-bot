@@ -3,12 +3,21 @@ import os
 import requests
 from flask import Flask, request
 from environs import Env
- 
+
+from cms_lib import CmsAuthentication, get_all_products, get_photo_by_id
+from fb_bot_lib import get_menu
+
 app = Flask(__name__)
 env = Env()
 env.read_env()
+client_id = env.str('ELASTIC_PATH_CLIENT_ID')
+client_secret = env.str('ELASTIC_PATH_CLIENT_SECRET')
+cms_auth = CmsAuthentication(client_id, client_secret)
+cms_token = cms_auth.get_access_token()
 FACEBOOK_TOKEN = env.str("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = env.str("VERIFY_TOKEN")
+STATIC_URL = env.str("STATIC_URL")
+
 
 @app.route('/', methods=['GET'])
 def verify():
@@ -17,12 +26,10 @@ def verify():
     """
     
     if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
-        if not request.args.get("hub.verify_token") == os.environ["VERIFY_TOKEN"]:
-            print(0)
+        if not request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return "Verification token mismatch", 403
-        print(1)
         return request.args["hub.challenge"], 200
-    return VERIFY_TOKEN, 200
+    return 'Hi there!', 200
     
 
 
@@ -39,8 +46,25 @@ def webhook():
                     sender_id = messaging_event["sender"]["id"]
                     recipient_id = messaging_event["recipient"]["id"]
                     message_text = messaging_event["message"]["text"]
-                    send_message(sender_id, message_text)
+                    send_menu(sender_id)
     return "ok", 200
+
+
+def send_menu(recipient_id):
+    params = {"access_token": FACEBOOK_TOKEN}
+    headers = {"Content-Type": "application/json"}
+    request_content = {
+        "recipient": {
+            "id": recipient_id
+        },
+        "message": get_menu(cms_token, STATIC_URL)
+    }
+    response = requests.post(
+        "https://graph.facebook.com/v2.6/me/messages",
+        params=params, headers=headers, json=request_content
+    )
+    response.raise_for_status()
+
 
 
 def send_message(recipient_id, message_text):
