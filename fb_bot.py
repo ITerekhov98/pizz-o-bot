@@ -44,8 +44,8 @@ def webhook():
             for messaging_event in entry["messaging"]:
                 if messaging_event.get("message"):
                     sender_id = messaging_event["sender"]["id"]
-                    recipient_id = messaging_event["recipient"]["id"]
-                    message_text = messaging_event["message"]["text"]
+                    # recipient_id = messaging_event["recipient"]["id"]
+                    # message_text = messaging_event["message"]["text"]
                     send_menu(sender_id)
     return "ok", 200
 
