@@ -1,6 +1,6 @@
-from cms_lib import CmsAuthentication
+from auxiliaries_tools.cms_lib import CmsAuthentication
 from environs import Env
-from fb_bot_lib import update_menu
+from auxiliaries_tools.fb_bot_lib import update_menu
 import redis
 
 

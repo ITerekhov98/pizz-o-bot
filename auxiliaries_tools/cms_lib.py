@@ -358,7 +358,6 @@ def clear_cart(token, user_id):
     response = requests.delete(url, headers=headers)
     response.raise_for_status()
 
-    return
 
 def get_all_categories(token):
     url = 'https://api.moltin.com/v2/categories'
@@ -369,6 +368,7 @@ def get_all_categories(token):
     response.raise_for_status()
 
     return response.json()
+
 
 def get_products_by_category_id(token, category_id):
     url = 'https://api.moltin.com/v2/products'
@@ -387,5 +387,5 @@ def get_products_by_category_id(token, category_id):
 def get_category_id_by_name(token, category_name):
     categories = get_all_categories(token)
     for category in categories['data']:
-        if  category['name'] == category_name:
+        if category['name'] == category_name:
             return category['id']
