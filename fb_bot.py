@@ -4,7 +4,7 @@ import requests
 from flask import Flask, request
 from environs import Env
 import redis
-from cms_lib import CmsAuthentication, get_all_products, get_photo_by_id, add_product_to_cart, get_cart_items
+from cms_lib import CmsAuthentication, get_all_products, get_photo_by_id, add_product_to_cart, get_cart_items, remove_product_from_cart
 from fb_bot_lib import get_menu, ResponseObject, get_user_cart
 
 
@@ -51,6 +51,7 @@ def handle_users_reply(response_details: ResponseObject, db):
     states_functions = {
         'START': handle_start,
         'HANDLE_MENU': handle_menu,
+        'HANDLE_CART': handle_cart
     }
     recorded_state = db.get(response_details.sender_id)
     if not recorded_state or recorded_state not in states_functions.keys():
@@ -92,12 +93,45 @@ def handle_start(response_details: ResponseObject, category_id=''):
     return 'HANDLE_MENU'
 
 
+def handle_cart(response_details: ResponseObject):
+    cms_token = app.config.get('cms_auth').get_access_token()
+    action = response_details.postback_payload
+    if not action:
+        return 'HANDLE_CART'
+    
+    if action.split('_')[0] == 'add':
+        product_id = action.split('_')[1]
+        add_product_to_cart(
+            cms_token,
+            response_details.sender_id,
+            product_id,
+            1
+        )
+        send_message(
+            response_details.sender_id,
+            'Товар добавлен в корзину!'
+        )
+    elif action.split('_')[0] == 'remove':
+        product_id = action.split('_')[1]
+        remove_product_from_cart(cms_token, response_details.sender_id, product_id)
+        send_message(
+            response_details.sender_id,
+            'Товар Удалён!'
+        )
+        return send_user_cart(response_details)
+
+    elif action == 'menu':    
+        return handle_start(response_details)
+    return 'HANDLE_CART'
+    
+
+
 def send_user_cart(response_details: ResponseObject):
     cms_token = app.config.get('cms_auth').get_access_token()
     static_url = app.config.get('static_url')
     cart = get_user_cart(cms_token, static_url, response_details.sender_id)
     send_response(app.config.get('fb_token'), response_details.sender_id, cart)
-    return 'HANDLE_MENU'
+    return 'HANDLE_CART'
 
 
 def handle_menu(response_details: ResponseObject):

@@ -84,15 +84,15 @@ def get_menu(cms_token, static_url, category_id):
     return menu
 
 def get_user_cart(cms_token, static_url, user_id):
-    text = ''
     cart_info = get_cart(cms_token, user_id)['data']
     total_amount = float(
         cart_info['meta']['display_price']['with_tax']['formatted']
     ) * 100
-    text += f"К оплате: {total_amount}"
+    title = f"К оплате: {total_amount}"
+    cart_items = get_cart_items(cms_token, user_id)['data']
 
     menu_items = [
-            {'title': text,
+            {'title': title,
             'image_url': urljoin(static_url, 'cart.jpg'),
             'buttons': [
                     {
@@ -113,6 +113,24 @@ def get_user_cart(cms_token, static_url, user_id):
                 ]
             }
         ]
+    menu_items.extend([
+        {"title": f"{product['name']} ({product['quantity']} шт на {product['meta']['display_price']['with_tax']['value']['amount']} р)",
+            "image_url": product['image']['href'],
+            "subtitle": product['description'],
+            "buttons": [
+                {
+                "type":"postback",
+                "title":"Добавить ещё одну",
+                "payload":f"add_{product['product_id']}",
+            },
+                {
+                "type":"postback",
+                "title":"Убрать из корзины",
+                "payload":f"remove_{product['id']}",
+            },
+            ]}
+        for product in cart_items]
+    )
     menu = {
         'attachment': {
             'type':'template',
