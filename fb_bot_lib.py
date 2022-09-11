@@ -1,7 +1,7 @@
 from urllib.parse import urljoin
 from cms_lib import get_photo_by_id, get_cart, get_products_by_category_id, get_all_categories, get_cart_items
 from dataclasses import dataclass
-
+import json
 
 MAX_ITEMS_COUNT_IN_MESSAGE = 10
 
@@ -13,15 +13,23 @@ class ResponseObject:
     postback_payload: str = ''
 
 
-def get_menu(cms_token, static_url, category_id):
+def update_menu(cms_token, static_url, db):
     categories = get_all_categories(cms_token)['data']
+    for category in categories:
+        category_name = category['name']
+        category_id = category['id']
+        other_categories = [product for product in categories if product['id'] != category_id]
+        menu = json.dumps(
+            get_menu(cms_token, static_url, category_id, other_categories)
+        )
+        if category_name == 'front_page':
+            db.set(f'menu_{category_name}', menu)
+        else:
+            db.set(f'menu_{category_id}', menu)
 
-    for index, category in enumerate(categories):
-        if category['name'] == 'front_page':
-            front_page_id = categories.pop(index)['id']
-            if not category_id:
-                category_id = front_page_id
-            break
+
+def get_menu(cms_token, static_url, category_id, categories):
+
     products = get_products_by_category_id(cms_token, category_id)['data']
 
     menu_items = [
@@ -82,6 +90,7 @@ def get_menu(cms_token, static_url, category_id):
         }
     }
     return menu
+
 
 def get_user_cart(cms_token, static_url, user_id):
     cart_info = get_cart(cms_token, user_id)['data']

@@ -1,5 +1,5 @@
 import os
-
+import json
 import requests
 from flask import Flask, request
 from environs import Env
@@ -61,7 +61,7 @@ def handle_users_reply(response_details: ResponseObject, db):
     if response_details.message_text == "/start":
         user_state = "START"
     state_handler = states_functions[user_state]
-    next_state = state_handler(response_details)
+    next_state = state_handler(response_details, db)
     db.set(response_details.sender_id, next_state)
 
 
@@ -81,19 +81,17 @@ def send_response(fb_token, recipient, message):
     response.raise_for_status()
 
 
-def handle_start(response_details: ResponseObject, category_id=''):
-    cms_token = app.config.get('cms_auth').get_access_token()
-    static_url = app.config.get('static_url')
-    menu = get_menu(
-            cms_token=cms_token, 
-            static_url=static_url, 
-            category_id=category_id,
-    )
+def handle_start(response_details: ResponseObject, db, category_id=''):
+    if not category_id:
+        menu = db.get(f'menu_front_page')
+    else:
+        menu = db.get(f'menu_{category_id}')
+    menu = json.loads(menu)
     send_response(app.config.get('fb_token'), response_details.sender_id, menu)
     return 'HANDLE_MENU'
 
 
-def handle_cart(response_details: ResponseObject):
+def handle_cart(response_details: ResponseObject, db):
     cms_token = app.config.get('cms_auth').get_access_token()
     action = response_details.postback_payload
     if not action:
@@ -121,7 +119,7 @@ def handle_cart(response_details: ResponseObject):
         return send_user_cart(response_details)
 
     elif action == 'menu':    
-        return handle_start(response_details)
+        return handle_start(response_details, db)
     return 'HANDLE_CART'
     
 
@@ -134,7 +132,7 @@ def send_user_cart(response_details: ResponseObject):
     return 'HANDLE_CART'
 
 
-def handle_menu(response_details: ResponseObject):
+def handle_menu(response_details: ResponseObject, db):
     cms_token = app.config.get('cms_auth').get_access_token()
     action = response_details.postback_payload
     if not action:
@@ -155,12 +153,12 @@ def handle_menu(response_details: ResponseObject):
 
     elif action.split('_')[0] == 'category':
         category_id = action.split('_')[1]
-        return handle_start(response_details, category_id)
+        return handle_start(response_details, db, category_id)
 
     elif action == 'cart':
         return send_user_cart(response_details)
     elif action == 'menu':    
-        return handle_start(response_details)
+        return handle_start(response_details, db)
     return 'HANDLE_MENU'
 
 
