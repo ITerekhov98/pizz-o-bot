@@ -8,12 +8,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, \
                          Filters, CallbackQueryHandler, PreCheckoutQueryHandler, CallbackContext
 
-from cms_lib import CmsAuthentication, get_product_by_id, \
+from auxiliaries_tools.cms_lib import CmsAuthentication, get_product_by_id, \
                  get_photo_by_id, add_product_to_cart, get_cart_items, \
                  get_cart, remove_product_from_cart, get_all_entries, \
                  save_customer_coords, get_customer_address, clear_cart
 
-from tg_bot_lib import fetch_coordinates, get_menu_keyboard, get_delivery_keyboard
+from auxiliaries_tools.tg_bot_lib import fetch_coordinates, get_menu_keyboard, get_delivery_keyboard
 
 
 def send_user_cart(update, context):

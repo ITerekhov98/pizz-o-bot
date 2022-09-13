@@ -1,7 +1,7 @@
 import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from cms_lib import get_all_products
+from auxiliaries_tools.cms_lib import get_all_products
                  
 
 def split_products_to_batches(products, batch_size):
