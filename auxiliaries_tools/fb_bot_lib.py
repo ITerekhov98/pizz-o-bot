@@ -161,19 +161,3 @@ def get_user_cart(cms_token, static_url, user_id):
         }
     }
     return menu
-
-
-def send_response(fb_token, recipient, message):
-    params = {"access_token": fb_token}
-    headers = {"Content-Type": "application/json"}
-    request_content = {
-        "recipient": {
-            "id": recipient
-        },
-        "message": message
-    }
-    response = requests.post(
-        "https://graph.facebook.com/v2.6/me/messages",
-        params=params, headers=headers, json=request_content
-    )
-    response.raise_for_status()

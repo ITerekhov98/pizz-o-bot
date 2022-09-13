@@ -1,8 +1,10 @@
 import json
+
+import requests
 from flask import Flask, request
 from environs import Env
 import redis
-from auxiliaries_tools.fb_bot_lib import ResponseObject, get_user_cart, send_response
+from auxiliaries_tools.fb_bot_lib import ResponseObject, get_user_cart
 from auxiliaries_tools.cms_lib import (
     CmsAuthentication,
     add_product_to_cart,
@@ -33,18 +35,20 @@ def webhook():
     """
     db = app.config.get('db')
     data = request.get_json()
-    if data["object"] == "page":
-        for entry in data["entry"]:
-            for messaging_event in entry["messaging"]:
-                response_details = ResponseObject(
-                    sender_id=messaging_event["sender"]["id"],
-                    recipient_id=messaging_event["recipient"]["id"],
-                )
-                if messaging_event.get("message"):
-                    response_details.message_text = messaging_event["message"]["text"]
-                elif messaging_event.get("postback"):
-                    response_details.postback_payload = messaging_event["postback"]["payload"]
-                handle_users_reply(response_details, db)
+    if not data["object"] == "page":
+        return
+        
+    for entry in data["entry"]:
+        for messaging_event in entry["messaging"]:
+            response_details = ResponseObject(
+                sender_id=messaging_event["sender"]["id"],
+                recipient_id=messaging_event["recipient"]["id"],
+            )
+            if messaging_event.get("message"):
+                response_details.message_text = messaging_event["message"]["text"]
+            elif messaging_event.get("postback"):
+                response_details.postback_payload = messaging_event["postback"]["payload"]
+            handle_users_reply(response_details, db)
     return "ok", 200
 
 
@@ -73,7 +77,20 @@ def handle_start(response_details: ResponseObject, db, category_id=''):
     else:
         menu = db.get(f'menu_{category_id}')
     menu = json.loads(menu)
-    send_response(app.config.get('fb_token'), response_details.sender_id, menu)
+
+    params = {"access_token": app.config.get('fb_token')}
+    headers = {"Content-Type": "application/json"}
+    request_content = {
+        "recipient": {
+            "id": response_details.sender_id
+        },
+        "message": menu
+    }
+    response = requests.post(
+        "https://graph.facebook.com/v2.6/me/messages",
+        params=params, headers=headers, json=request_content
+    )
+    response.raise_for_status()
     return 'HANDLE_MENU'
 
 
@@ -83,6 +100,10 @@ def handle_cart(response_details: ResponseObject, db):
     action = response_details.postback_payload
     if not action:
         return 'HANDLE_CART'
+    
+    if action == 'menu':
+        return handle_start(response_details, db)
+
 
     if action.split('_')[0] == 'add':
         product_id = action.split('_')[1]
@@ -92,11 +113,7 @@ def handle_cart(response_details: ResponseObject, db):
             product_id,
             1
         )
-        send_response(
-            fb_token,
-            response_details.sender_id,
-            {'text': 'Товар добавлен в корзину!'}
-        )
+        response_text = 'Товар добавлен в корзину!'
     elif action.split('_')[0] == 'remove':
         product_id = action.split('_')[1]
         remove_product_from_cart(
@@ -104,23 +121,42 @@ def handle_cart(response_details: ResponseObject, db):
             response_details.sender_id,
             product_id
         )
-        send_response(
-            fb_token,
-            response_details.sender_id,
-            {'text': 'Товар Удалён!'}
-        )
-        return send_user_cart(response_details)
+        response_text = 'Товар Удалён!'
 
-    elif action == 'menu':
-        return handle_start(response_details, db)
-    return 'HANDLE_CART'
+    params = {"access_token": fb_token}
+    headers = {"Content-Type": "application/json"}
+    request_content = {
+        "recipient": {
+            "id": response_details.sender_id
+        },
+        "message": {'text': response_text}
+    }
+    response = requests.post(
+        "https://graph.facebook.com/v2.6/me/messages",
+        params=params, headers=headers, json=request_content
+    )
+    response.raise_for_status()
+    return send_user_cart(response_details)
 
+    
 
 def send_user_cart(response_details: ResponseObject):
     cms_token = app.config.get('cms_auth').get_access_token()
     static_url = app.config.get('static_url')
     cart = get_user_cart(cms_token, static_url, response_details.sender_id)
-    send_response(app.config.get('fb_token'), response_details.sender_id, cart)
+    params = {"access_token": app.config.get('fb_token')}
+    headers = {"Content-Type": "application/json"}
+    request_content = {
+        "recipient": {
+            "id": response_details.sender_id
+        },
+        "message": cart
+    }
+    response = requests.post(
+        "https://graph.facebook.com/v2.6/me/messages",
+        params=params, headers=headers, json=request_content
+    )
+    response.raise_for_status()
     return 'HANDLE_CART'
 
 
@@ -130,6 +166,16 @@ def handle_menu(response_details: ResponseObject, db):
     if not action:
         return 'HANDLE_MENU'
 
+    if action.split('_')[0] == 'category':
+        category_id = action.split('_')[1]
+        return handle_start(response_details, db, category_id)
+
+    if action == 'cart':
+        return send_user_cart(response_details)
+
+    if action == 'menu':
+        return handle_start(response_details, db)
+
     if action.split('_')[0] == 'add':
         product_id = action.split('_')[1]
         add_product_to_cart(
@@ -138,20 +184,20 @@ def handle_menu(response_details: ResponseObject, db):
             product_id,
             1
         )
-        send_response(
-            app.config.get('fb_token'),
-            response_details.sender_id,
-            {'text': 'Товар добавлен в корзину!'}
+        response_text = 'Товар добавлен в корзину!'
+        params = {"access_token": app.config.get('fb_token')}
+        headers = {"Content-Type": "application/json"}
+        request_content = {
+            "recipient": {
+                "id": response_details.sender_id
+            },
+            "message": {'text': response_text}
+        }
+        response = requests.post(
+            "https://graph.facebook.com/v2.6/me/messages",
+            params=params, headers=headers, json=request_content
         )
-
-    elif action.split('_')[0] == 'category':
-        category_id = action.split('_')[1]
-        return handle_start(response_details, db, category_id)
-
-    elif action == 'cart':
-        return send_user_cart(response_details)
-    elif action == 'menu':
-        return handle_start(response_details, db)
+        response.raise_for_status()
     return 'HANDLE_MENU'
 
 
@@ -163,7 +209,7 @@ def create_app():
     cms_auth = CmsAuthentication(client_id, client_secret)
     app.config.update(
         cms_auth=cms_auth,
-        fb_token=env.str("PAGE_ACCESS_TOKEN"),
+        fb_token=env.str("FB_ACCESS_TOKEN"),
         fb_verify_token=env.str("VERIFY_TOKEN"),
         static_url=env.str("STATIC_URL"),
         db=redis.StrictRedis(
